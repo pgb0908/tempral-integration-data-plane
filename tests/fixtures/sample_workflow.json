@@ -1,0 +1,59 @@
+{
+  "name": "Sample Workflow",
+  "nodes": [
+    {
+      "id": "1",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "parameters": {}
+    },
+    {
+      "id": "2",
+      "name": "SetGreeting",
+      "type": "n8n-nodes-base.set",
+      "parameters": {
+        "values": {
+          "string": [
+            {"name": "greeting", "value": "={{ \"Hello \" + $json.name }}"}
+          ]
+        }
+      }
+    },
+    {
+      "id": "3",
+      "name": "CheckName",
+      "type": "n8n-nodes-base.if",
+      "parameters": {
+        "conditions": {
+          "string": [
+            {"value1": "={{ $json.name }}", "operation": "notEqual", "value2": ""}
+          ]
+        }
+      }
+    },
+    {
+      "id": "4",
+      "name": "PassThrough",
+      "type": "n8n-nodes-base.noOp",
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [{"node": "SetGreeting", "type": "main", "index": 0}]
+      ]
+    },
+    "SetGreeting": {
+      "main": [
+        [{"node": "CheckName", "type": "main", "index": 0}]
+      ]
+    },
+    "CheckName": {
+      "main": [
+        [{"node": "PassThrough", "type": "main", "index": 0}],
+        []
+      ]
+    }
+  }
+}

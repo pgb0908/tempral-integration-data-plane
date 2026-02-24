@@ -1,0 +1,71 @@
+{
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "1e7a1b1d-1234-4567-890a-1234567890ab",
+      "name": "When clicking 'Execute Workflow'",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "userName",
+              "value": "Bong"
+            }
+          ]
+        }
+      },
+      "id": "2f8b2c2e-2345-5678-901b-2345678901bc",
+      "name": "Set User Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [620, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://httpbin.org/get",
+        "queryParametersUi": {
+          "parameter": [
+            {
+              "name": "name",
+              "value": "={{$node[\"Set User Data\"].json[\"userName\"]}}"
+            }
+          ]
+        }
+      },
+      "id": "3g9c3d3f-3456-6789-012c-3456789012cd",
+      "name": "Call External API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [840, 300]
+    }
+  ],
+  "connections": {
+    "When clicking 'Execute Workflow'": {
+      "main": [
+        [
+          {
+            "node": "Set User Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set User Data": {
+      "main": [
+        [
+          {
+            "node": "Call External API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

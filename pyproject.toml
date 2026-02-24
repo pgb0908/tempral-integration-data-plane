@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tempral-integration-data-plane"
+version = "0.1.0"
+description = "Flow Engine: n8n JSON → Temporal.io execution"
+requires-python = ">=3.11"
+dependencies = [
+    "temporalio>=1.7.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.9.0",
+    "httpx>=0.27.0",
+    "simpleeval>=0.9.13",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-mock>=3.14.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["flow_engine*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
