@@ -6,9 +6,10 @@ from typing import AsyncGenerator
 from fastapi import FastAPI
 from temporalio.client import Client
 
-from flow_engine.api.dependencies import set_temporal_client
-from flow_engine.api.routes import execution as execution_router
-from flow_engine.api.routes import workflow as workflow_router
+from flow_engine.api.dependencies import set_flow_store, set_temporal_client
+from flow_engine.api.routes import flows as flows_router
+from flow_engine.api.routes import runs as runs_router
+from flow_engine.store.flow_store import FlowStore
 from flow_engine.temporal.worker import TEMPORAL_HOST
 
 
@@ -16,18 +17,19 @@ from flow_engine.temporal.worker import TEMPORAL_HOST
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     client = await Client.connect(TEMPORAL_HOST)
     set_temporal_client(client)
+    set_flow_store(FlowStore())
     yield
 
 
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Flow Engine API",
-        description="Execute n8n-style workflows on Temporal.io",
-        version="0.1.0",
+        description="Deploy and run n8n-style workflows on Temporal.io",
+        version="0.2.0",
         lifespan=lifespan,
     )
-    app.include_router(workflow_router.router, prefix="/workflows", tags=["workflows"])
-    app.include_router(execution_router.router, prefix="/workflows", tags=["executions"])
+    app.include_router(flows_router.router, prefix="/flows", tags=["flows"])
+    app.include_router(runs_router.router, tags=["runs"])
     return app
 
 

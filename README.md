@@ -142,6 +142,120 @@ n8n 워크플로우 JSON 구조를 따릅니다.
 | `={{ $json.a + " " + $json.b }}` | 문자열 연결 등 연산 |
 | `={{ $node['NodeName'].json.field }}` | 이전 노드 결과 참조 |
 
+## 구성도
+
+```mermaid
+graph TD
+    main["main.py<br/>(진입점)"]
+
+    subgraph api["flow_engine/api/"]
+        app["app.py<br/>FastAPI + lifespan"]
+        dep["dependencies.py<br/>Temporal Client 전역 관리"]
+        r_wf["routes/workflow.py<br/>POST /workflows/execute"]
+        r_ex["routes/execution.py<br/>status / result / cancel"]
+    end
+
+    subgraph temporal["flow_engine/temporal/"]
+        wf["workflow.py<br/>FlowWorkflow<br/>(Query / Signal)"]
+        act["activities.py<br/>execute_node_activity"]
+        wrk["worker.py<br/>Worker 부트스트랩"]
+    end
+
+    subgraph parser["flow_engine/parser/"]
+        wp["workflow_parser.py<br/>JSON → WorkflowDefinition"]
+        gb["graph_builder.py<br/>DAG / 위상정렬 / 분기 라우팅"]
+    end
+
+    subgraph expr["flow_engine/expression/"]
+        ev["evaluator.py<br/>$json · $node 평가기"]
+        sb["sandbox.py<br/>AttrDict / NodeAccessor"]
+    end
+
+    subgraph nodes["flow_engine/nodes/"]
+        base["base.py<br/>BaseNodeExecutor"]
+        reg["registry.py<br/>타입 → Executor 매핑"]
+        impl["trigger / set / if<br/>http / code / no_op"]
+    end
+
+    subgraph models["flow_engine/models/"]
+        mn["node.py<br/>NodeDefinition · NodeType"]
+        mw["workflow.py<br/>WorkflowDefinition"]
+        me["execution.py<br/>ExecutionContext · NodeResult"]
+    end
+
+    main --> app
+    main --> wrk
+    app --> dep
+    app --> r_wf
+    app --> r_ex
+    r_wf --> dep
+    r_ex --> dep
+    wrk --> wf
+    wrk --> act
+    wf --> wp
+    wf --> gb
+    wf --> act
+    act --> reg
+    reg --> impl
+    impl --> base
+    impl --> ev
+    ev --> sb
+    wp --> mw
+    gb --> mn
+    act --> me
+```
+
+## 호출 흐름도
+
+```mermaid
+sequenceDiagram
+    participant Client as HTTP Client
+    participant API as FastAPI<br/>/workflows/execute
+    participant TC as Temporal Client
+    participant TS as Temporal Server<br/>(localhost:7233)
+    participant WF as FlowWorkflow<br/>(Temporal Workflow)
+    participant ACT as execute_node_activity<br/>(Temporal Activity)
+    participant EX as NodeExecutor<br/>(trigger/set/if/http/code/noOp)
+
+    Client->>API: POST /workflows/execute<br/>{ workflow_definition, initial_data }
+    API->>API: WorkflowParser.parse()
+    API->>TC: client.start_workflow(FlowWorkflow)
+    TC->>TS: 워크플로우 등록
+    API-->>Client: { workflow_id, status: "started" }
+
+    TS->>WF: FlowWorkflow.run(request)
+    WF->>WF: WorkflowParser.parse()
+    WF->>WF: WorkflowGraph() → topological_sort()
+    Note over WF: 실행 순서 결정 (Kahn's algorithm)
+
+    loop 각 노드 (위상정렬 순)
+        WF->>ACT: execute_activity(execute_node_activity,<br/>node, input_items, context)
+        ACT->>ACT: get_executor(node.type)
+        ACT->>EX: executor.execute(node, input_items, context)
+
+        alt Set / Code 노드
+            EX->>EX: ExpressionEvaluator.evaluate()<br/>($json, $node 표현식 처리)
+        else HTTP Request 노드
+            EX->>EX: httpx.AsyncClient.request()
+        else IF 노드
+            EX->>EX: 조건 평가 → port 0 (true) / port 1 (false)
+        end
+
+        EX-->>ACT: NodeResult { output_data, status }
+        ACT-->>WF: result dict
+        WF->>WF: 다음 노드로 output_data 라우팅<br/>node_inputs[next_node] += port_items
+    end
+
+    WF-->>TS: ExecutionContext (최종 결과)
+
+    Client->>API: GET /workflows/{id}/result
+    API->>TC: workflow_handle.result()
+    TC->>TS: 결과 조회 (완료 대기)
+    TS-->>TC: ExecutionContext
+    TC-->>API: result
+    API-->>Client: { workflow_id, result: ExecutionContext }
+```
+
 ## 프로젝트 구조
 
 ```
