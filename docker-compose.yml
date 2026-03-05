@@ -1,19 +1,37 @@
 services:
+  postgresql:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal
+    volumes:
+      - postgresql-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   temporal:
     image: temporalio/auto-setup:latest
     ports:
       - "7233:7233"
     environment:
-      - DB=sqlite
-    volumes:
-      - temporal-data:/etc/temporal
+      - DB=postgres12_pgx
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal
+      - POSTGRES_SEEDS=postgresql
+    depends_on:
+      postgresql:
+        condition: service_healthy
     healthcheck:
       # /dev/tcp is a bash built-in for TCP port checks — no external tools needed
       test: ["CMD-SHELL", "printf '' > /dev/tcp/localhost/7233 && echo OK || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 20
-      start_period: 20s
+      start_period: 15s
 
   temporal-ui:
     image: temporalio/ui:latest
@@ -39,5 +57,5 @@ services:
     restart: on-failure
 
 volumes:
-  temporal-data:
+  postgresql-data:
   flow-data:
