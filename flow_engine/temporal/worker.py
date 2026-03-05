@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
 from temporalio.client import Client
 from temporalio.worker import Worker
@@ -8,7 +9,7 @@ from temporalio.worker import Worker
 from flow_engine.temporal.activities import execute_node_activity
 from flow_engine.temporal.workflow import FlowWorkflow
 
-TEMPORAL_HOST = "localhost:7233"
+TEMPORAL_HOST = os.getenv("TEMPORAL_HOST", "localhost:7233")
 TASK_QUEUE = "flow-engine"
 
 

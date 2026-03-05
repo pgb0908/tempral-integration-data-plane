@@ -1,0 +1,64 @@
+services:
+  postgresql:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal
+    volumes:
+      - postgresql-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  temporal:
+    image: temporalio/auto-setup:latest
+    ports:
+      - "7233:7233"
+    environment:
+      - DB=postgres12_pgx
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal
+      - POSTGRES_SEEDS=postgresql
+      # Bind to all interfaces so the healthcheck can reach localhost:7233
+      # The entrypoint script then auto-sets TEMPORAL_BROADCAST_ADDRESS to the real container IP
+      - BIND_ON_IP=0.0.0.0
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    healthcheck:
+      # Use the temporal CLI (bundled in auto-setup) for a proper gRPC health check
+      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "localhost:7233"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+
+  temporal-ui:
+    image: temporalio/ui:latest
+    ports:
+      - "8080:8080"
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+    depends_on:
+      temporal:
+        condition: service_healthy
+
+  flow-engine:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - TEMPORAL_HOST=temporal:7233
+    volumes:
+      - flow-data:/app/flows
+    depends_on:
+      temporal:
+        condition: service_healthy
+    restart: on-failure
+
+volumes:
+  postgresql-data:
+  flow-data:
