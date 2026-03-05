@@ -1,0 +1,43 @@
+services:
+  temporal:
+    image: temporalio/auto-setup:latest
+    ports:
+      - "7233:7233"
+    environment:
+      - DB=sqlite
+    volumes:
+      - temporal-data:/etc/temporal
+    healthcheck:
+      # /dev/tcp is a bash built-in for TCP port checks — no external tools needed
+      test: ["CMD-SHELL", "printf '' > /dev/tcp/localhost/7233 && echo OK || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  temporal-ui:
+    image: temporalio/ui:latest
+    ports:
+      - "8080:8080"
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+    depends_on:
+      temporal:
+        condition: service_healthy
+
+  flow-engine:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - TEMPORAL_HOST=temporal:7233
+    volumes:
+      - flow-data:/app/flows
+    depends_on:
+      temporal:
+        condition: service_healthy
+    restart: on-failure
+
+volumes:
+  temporal-data:
+  flow-data:
