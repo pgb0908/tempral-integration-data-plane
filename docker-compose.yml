@@ -22,16 +22,19 @@ services:
       - POSTGRES_USER=temporal
       - POSTGRES_PWD=temporal
       - POSTGRES_SEEDS=postgresql
+      # Bind to all interfaces so the healthcheck can reach localhost:7233
+      # The entrypoint script then auto-sets TEMPORAL_BROADCAST_ADDRESS to the real container IP
+      - BIND_ON_IP=0.0.0.0
     depends_on:
       postgresql:
         condition: service_healthy
     healthcheck:
-      # /dev/tcp is a bash built-in for TCP port checks — no external tools needed
-      test: ["CMD-SHELL", "printf '' > /dev/tcp/localhost/7233 && echo OK || exit 1"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-      start_period: 15s
+      # Use the temporal CLI (bundled in auto-setup) for a proper gRPC health check
+      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "localhost:7233"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
 
   temporal-ui:
     image: temporalio/ui:latest
