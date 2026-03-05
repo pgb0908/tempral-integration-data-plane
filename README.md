@@ -4,13 +4,14 @@ n8n 스타일의 워크플로우 JSON을 [Temporal.io](https://temporal.io/) 위
 
 ## 개요
 
-JSON으로 정의된 노드 DAG를 파싱하여 각 노드를 Temporal Activity로 실행합니다. 노드 간 데이터 라우팅, `$json`/`$node` 표현식 평가, 실행 상태 조회 및 취소 API를 제공합니다.
+JSON으로 정의된 노드 DAG를 **배포(Deploy)** 하고 **실행(Run)** 하는 두 단계로 동작합니다. 배포된 flow 정의는 파일로 저장되며, 실행 시 저장된 정의를 읽어 각 노드를 Temporal Activity로 실행합니다. 노드 간 데이터 라우팅, `$json`/`$node` 표현식 평가, 실행 상태 조회 및 취소 API를 제공합니다.
 
 ```
-POST /workflows/execute  →  FlowWorkflow (Temporal)
-                               └─ topological sort
-                               └─ execute_node_activity × N
-                               └─ 노드 간 데이터 라우팅
+POST /flows                    →  flow 정의 저장 (flow_id 반환)
+POST /flows/{flow_id}/runs     →  FlowWorkflow (Temporal)
+                                     └─ topological sort
+                                     └─ execute_node_activity × N
+                                     └─ 노드 간 데이터 라우팅
 ```
 
 ## 요구사항
@@ -45,45 +46,85 @@ python main.py both     # Worker + API 동시 실행
 
 ## API
 
-### 워크플로우 실행
+### Flow 배포 (Deploy)
+
+| Method | Path | 설명 |
+|--------|------|------|
+| `POST` | `/flows` | 새 flow 배포 → `flow_id` 반환 |
+| `GET` | `/flows` | 배포된 flow 목록 |
+| `GET` | `/flows/{flow_id}` | flow 정의 조회 |
+| `PUT` | `/flows/{flow_id}` | flow 정의 교체 (hot-deploy) |
+| `DELETE` | `/flows/{flow_id}` | flow 삭제 |
+
+#### flow 배포
 
 ```bash
-POST /workflows/execute
-```
-
-```json
-{
-  "workflow_definition": {
+curl -X POST http://localhost:8000/flows \
+  -H "Content-Type: application/json" \
+  -d '{
     "name": "My Workflow",
-    "nodes": [...],
-    "connections": {...}
-  },
-  "initial_data": [{"name": "World"}]
-}
+    "workflow_definition": {
+      "name": "My Workflow",
+      "nodes": [...],
+      "connections": {...}
+    }
+  }'
 ```
 
 응답:
 
 ```json
-{"workflow_id": "flow-xxxxxxxx-...", "status": "started"}
+{
+  "flow_id": "flow-a1b2c3d4",
+  "name": "My Workflow",
+  "workflow_definition": {...},
+  "version": 1,
+  "created_at": "2026-03-04T00:00:00Z",
+  "updated_at": "2026-03-04T00:00:00Z"
+}
 ```
 
-### 실행 상태 조회
+#### Hot-deploy (재시작 없이 정의 교체)
 
 ```bash
-GET /workflows/{workflow_id}/status
+curl -X PUT http://localhost:8000/flows/flow-a1b2c3d4 \
+  -H "Content-Type: application/json" \
+  -d '{"workflow_definition": {...새 정의...}}'
 ```
 
-### 실행 결과 조회 (완료 대기)
+- 파일만 교체되므로 worker 재시작 불필요
+- 이미 실행 중인 run에는 영향 없음 (Temporal 내부에 정의가 캡처됨)
+- 다음 run부터 새 정의 적용 (version +1)
+
+### Flow 실행 (Run)
+
+| Method | Path | 설명 |
+|--------|------|------|
+| `POST` | `/flows/{flow_id}/runs` | 배포된 flow 실행 → `run_id` 반환 |
+| `GET` | `/runs/{run_id}/status` | 실행 상태 조회 |
+| `GET` | `/runs/{run_id}/result` | 실행 결과 조회 (완료 대기) |
+| `POST` | `/runs/{run_id}/cancel` | 실행 취소 |
+
+#### flow 실행
 
 ```bash
-GET /workflows/{workflow_id}/result
+curl -X POST http://localhost:8000/flows/flow-a1b2c3d4/runs \
+  -H "Content-Type: application/json" \
+  -d '{"initial_data": [{"name": "World"}]}'
 ```
 
-### 실행 취소
+응답:
+
+```json
+{"flow_id": "flow-a1b2c3d4", "run_id": "run-e5f6g7h8", "status": "started"}
+```
+
+#### 상태 및 결과 조회
 
 ```bash
-POST /workflows/{workflow_id}/cancel
+GET /runs/{run_id}/status
+GET /runs/{run_id}/result
+POST /runs/{run_id}/cancel
 ```
 
 ## 워크플로우 JSON 형식
@@ -150,9 +191,13 @@ graph TD
 
     subgraph api["flow_engine/api/"]
         app["app.py<br/>FastAPI + lifespan"]
-        dep["dependencies.py<br/>Temporal Client 전역 관리"]
-        r_wf["routes/workflow.py<br/>POST /workflows/execute"]
-        r_ex["routes/execution.py<br/>status / result / cancel"]
+        dep["dependencies.py<br/>Temporal Client · FlowStore 전역 관리"]
+        r_flows["routes/flows.py<br/>POST·GET·PUT·DELETE /flows"]
+        r_runs["routes/runs.py<br/>POST /flows/{id}/runs<br/>status · result · cancel"]
+    end
+
+    subgraph store["flow_engine/store/"]
+        fs["flow_store.py<br/>FlowStore (파일 기반)"]
     end
 
     subgraph temporal["flow_engine/temporal/"]
@@ -181,15 +226,19 @@ graph TD
         mn["node.py<br/>NodeDefinition · NodeType"]
         mw["workflow.py<br/>WorkflowDefinition"]
         me["execution.py<br/>ExecutionContext · NodeResult"]
+        mf["flow.py<br/>FlowDeployment"]
     end
 
     main --> app
     main --> wrk
     app --> dep
-    app --> r_wf
-    app --> r_ex
-    r_wf --> dep
-    r_ex --> dep
+    app --> r_flows
+    app --> r_runs
+    r_flows --> dep
+    r_flows --> fs
+    r_runs --> dep
+    r_runs --> fs
+    dep --> fs
     wrk --> wf
     wrk --> act
     wf --> wp
@@ -203,6 +252,7 @@ graph TD
     wp --> mw
     gb --> mn
     act --> me
+    fs --> mf
 ```
 
 ## 호출 흐름도
@@ -210,18 +260,25 @@ graph TD
 ```mermaid
 sequenceDiagram
     participant Client as HTTP Client
-    participant API as FastAPI<br/>/workflows/execute
+    participant API as FastAPI
+    participant FS as FlowStore<br/>(flows/*.json)
     participant TC as Temporal Client
     participant TS as Temporal Server<br/>(localhost:7233)
     participant WF as FlowWorkflow<br/>(Temporal Workflow)
     participant ACT as execute_node_activity<br/>(Temporal Activity)
     participant EX as NodeExecutor<br/>(trigger/set/if/http/code/noOp)
 
-    Client->>API: POST /workflows/execute<br/>{ workflow_definition, initial_data }
-    API->>API: WorkflowParser.parse()
+    Client->>API: POST /flows<br/>{ name, workflow_definition }
+    API->>API: WorkflowParser.parse() (유효성 검사)
+    API->>FS: FlowStore.save(FlowDeployment)
+    API-->>Client: { flow_id, version: 1, ... }
+
+    Client->>API: POST /flows/{flow_id}/runs<br/>{ initial_data }
+    API->>FS: FlowStore.get(flow_id)
+    FS-->>API: FlowDeployment
     API->>TC: client.start_workflow(FlowWorkflow)
     TC->>TS: 워크플로우 등록
-    API-->>Client: { workflow_id, status: "started" }
+    API-->>Client: { flow_id, run_id, status: "started" }
 
     TS->>WF: FlowWorkflow.run(request)
     WF->>WF: WorkflowParser.parse()
@@ -248,12 +305,12 @@ sequenceDiagram
 
     WF-->>TS: ExecutionContext (최종 결과)
 
-    Client->>API: GET /workflows/{id}/result
+    Client->>API: GET /runs/{run_id}/result
     API->>TC: workflow_handle.result()
     TC->>TS: 결과 조회 (완료 대기)
     TS-->>TC: ExecutionContext
     TC-->>API: result
-    API-->>Client: { workflow_id, result: ExecutionContext }
+    API-->>Client: { run_id, result: ExecutionContext }
 ```
 
 ## 프로젝트 구조
@@ -263,11 +320,18 @@ tempral-integration-data-plane/
 ├── pyproject.toml
 ├── main.py                         # 진입점 (worker / api / both)
 │
+├── flows/                          # 배포된 flow 정의 저장소 (자동 생성)
+│   └── flow-{id}.json
+│
 ├── flow_engine/
 │   ├── models/
 │   │   ├── node.py                 # NodeDefinition, NodeType
 │   │   ├── workflow.py             # WorkflowDefinition
-│   │   └── execution.py           # ExecutionContext, NodeResult
+│   │   ├── execution.py            # ExecutionContext, NodeResult
+│   │   └── flow.py                 # FlowDeployment
+│   │
+│   ├── store/
+│   │   └── flow_store.py           # 파일 기반 FlowStore
 │   │
 │   ├── parser/
 │   │   ├── workflow_parser.py      # JSON → WorkflowDefinition
@@ -294,12 +358,16 @@ tempral-integration-data-plane/
 │   │
 │   └── api/
 │       ├── app.py
+│       ├── dependencies.py        # Temporal Client · FlowStore 전역 관리
 │       └── routes/
-│           ├── workflow.py        # POST /workflows/execute
-│           └── execution.py      # status / result / cancel
+│           ├── flows.py           # POST·GET·PUT·DELETE /flows
+│           └── runs.py            # /flows/{id}/runs · /runs/{id}/...
 │
 └── tests/
-    ├── fixtures/sample_workflow.json
+    ├── fixtures/
+    │   ├── sample_workflow.json
+    │   └── n8n_sample.json
+    ├── test_flows_api.py
     ├── test_parser.py
     ├── test_expression.py
     └── test_nodes.py
